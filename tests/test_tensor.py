@@ -10,6 +10,8 @@ class TestTensor(unittest.TestCase):
     def test_add(self):
         t1 = minitorch.Tensor([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
         t2 = minitorch.Tensor([[7, 8, 9], [1, 2, 3], [4, 5, 6]])
+        t1.requires_grad = True
+        t2.requires_grad = True
         t3 = t1 + t2
         self.assertTrue((t3.data == t1.data + t2.data).all())
         self.assertTupleEqual(t3._children, (t1, t2))

@@ -50,9 +50,11 @@ class Tensor:
 
     def transpose(self):
         result = Tensor(self.data.transpose())
+        result.requires_grad = self.requires_grad
+        if not result.requires_grad:
+            return result
         result._children = (self,)
         result._op = "T"
-        result.requires_grad = self.requires_grad
 
         def backward():
             raise NotImplementedError
@@ -62,13 +64,17 @@ class Tensor:
 
     def __add__(self, other: Tensor) -> Tensor:
         result = Tensor(self.data + other.data)
-        result._children = (self, other)
-        result._op = "+"
         # If any of children requires grad, then its result will require grad.
         # This is required for loss = a + b + c case
         # where a + b creates a intermediate tensor with `require_grad` default to false
         # To tackle this, we need to have the following line.
         result.requires_grad = self.requires_grad | other.requires_grad
+        if not result.requires_grad:
+            # No need for computation graph if grad is not required.
+            # Reference to self and other can be immediately dropped.
+            return result
+        result._children = (self, other)
+        result._op = "+"
 
         def backward():
             if result.grad is None:
@@ -85,9 +91,11 @@ class Tensor:
 
     def __matmul__(self, other: Tensor) -> Tensor:
         result = Tensor(self.data @ other.data)
+        result.requires_grad = self.requires_grad | other.requires_grad
+        if not result.requires_grad:
+            return result
         result._children = (self, other)
         result._op = "@"
-        result.requires_grad = self.requires_grad | other.requires_grad
 
         def backward():
             if result.grad is None:
