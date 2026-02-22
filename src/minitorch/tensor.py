@@ -3,6 +3,11 @@ from typing import Any
 import numpy as np
 
 
+def broadcast_dims(shape: tuple[int, ...], ndim: int):
+    padded = (1,) * (ndim - len(shape)) + shape
+    return tuple(i for i, s in enumerate(padded) if s == 1)
+
+
 class Tensor:
     def __init__(self, data: Any):
         self.data: np.ndarray = data if isinstance(data, np.ndarray) else np.array(data)
@@ -62,6 +67,20 @@ class Tensor:
         result._backward = backward
         return result
 
+    def sum(self, dim: int | tuple[int, ...], keepdim: bool = False):
+        result = Tensor(self.data.sum(dim, keepdims=keepdim))
+        result.requires_grad = self.requires_grad
+        if not result.requires_grad:
+            return result
+        result._children = (self,)
+        result._op = "Sum"
+
+        def backward():
+            raise NotImplementedError
+
+        result._backward = backward
+        return result
+
     def __add__(self, other: Tensor) -> Tensor:
         result = Tensor(self.data + other.data)
         # If any of children requires grad, then its result will require grad.
@@ -111,6 +130,38 @@ class Tensor:
 
         result._backward = backward
         return result
+
+    def __mul__(self, other: Tensor) -> Tensor:
+        result = Tensor(self.data * other.data)
+        result.requires_grad = self.requires_grad | other.requires_grad
+        if not result.requires_grad:
+            return result
+        result._children = (self, other)
+        result._op = "*"
+        self_broadcast_dims = broadcast_dims(self.shape, len(result.shape))
+        other_broadcast_dims = broadcast_dims(other.shape, len(result.shape))
+
+        def backward():
+            if result.grad is None:
+                raise RuntimeError(
+                    "result gradient must be calculated before its children"
+                )
+            if self.requires_grad:
+                self.grad = self._zero_grad_if_none()
+                grad = Tensor(other.data) * result.grad
+                if self_broadcast_dims:
+                    grad = grad.sum(self_broadcast_dims, keepdim=True)
+                self.grad += grad
+            if other.requires_grad:
+                other.grad = other._zero_grad_if_none()
+                grad = Tensor(self.data) * result.grad
+                if other_broadcast_dims:
+                    grad = grad.sum(other_broadcast_dims, keepdim=True)
+                other.grad += grad
+
+        result._backward = backward
+        return result
+
 
     def _zero_grad_if_none(self) -> Tensor:
         if self.grad is not None:
