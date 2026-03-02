@@ -14,7 +14,7 @@ class Tensor:
         self.requires_grad = False
         self.grad: Tensor | None = None
 
-        self._backward = lambda: None
+        self._grad_fn = lambda: None
         self._children: tuple[Tensor, ...] = ()
         self._op = ""
 
@@ -51,7 +51,23 @@ class Tensor:
         build_topo(self)
 
         for t in reversed(order):
-            t._backward()
+            t._grad_fn()
+
+    def reshape(self, shape: tuple[int, ...]) -> Tensor:
+        result = Tensor(self.data.reshape(shape))
+        result.requires_grad = self.requires_grad
+        if not result.requires_grad:
+            return result
+        result._children = (self,)
+        result._op = "Reshape"
+
+        def backward():
+            if self.requires_grad:
+                self.grad = self._zero_grad_if_none()
+                self.grad += result.grad.reshape(self.shape)
+
+        result._grad_fn = backward
+        return result
 
     def transpose(self):
         result = Tensor(self.data.transpose())
@@ -64,8 +80,28 @@ class Tensor:
         def backward():
             raise NotImplementedError
 
-        result._backward = backward
+        result._grad_fn = backward
         return result
+
+    def unsqueeze(self, dim: int):
+        result = Tensor(np.expand_dims(self.data, dim))
+        result.requires_grad = self.requires_grad
+        if not result.requires_grad:
+            return result
+        result._children = (self,)
+        result._op = "Unsqueeze"
+
+        def backward():
+            raise NotImplementedError
+
+        result._grad_fn = backward
+        return result
+
+    def flatten(self, start_dim: int = 0, end_dim: int = -1):
+        if end_dim < 0:
+            end_dim += len(self.shape)
+        new_shape = self.shape[:start_dim] + (-1,) + self.shape[end_dim + 1 :]
+        return self.reshape(new_shape)
 
     def sum(self, dim: int | tuple[int, ...], keepdim: bool = False):
         result = Tensor(self.data.sum(dim, keepdims=keepdim))
@@ -76,9 +112,20 @@ class Tensor:
         result._op = "Sum"
 
         def backward():
-            raise NotImplementedError
+            if result.grad is None:
+                raise RuntimeError("result grad must be calculated before its children")
+            rgrad = result.grad
+            if not keepdim:
+                if isinstance(dim, int):
+                    rgrad = rgrad.unsqueeze(dim)
+                else:
+                    for d in sorted(dim):
+                        rgrad = rgrad.unsqueeze(d)
+            if self.requires_grad:
+                self.grad = self._zero_grad_if_none()
+                self.grad += rgrad.broadcast_to(self.shape)
 
-        result._backward = backward
+        result._grad_fn = backward
         return result
 
     def broadcast_to(self, shape: tuple[int, ...]) -> Tensor:
@@ -99,7 +146,7 @@ class Tensor:
                 self.grad = self._zero_grad_if_none()
                 self.grad += result.grad.sum(broadcast_dims, keepdim=True)
 
-        result._backward = backward
+        result._grad_fn = backward
         return result
 
     def __add__(self, other: Tensor) -> Tensor:
@@ -129,7 +176,7 @@ class Tensor:
                 other.grad = other._zero_grad_if_none()
                 other.grad += result.grad
 
-        result._backward = backward
+        result._grad_fn = backward
         return result
 
     def __matmul__(self, other: Tensor) -> Tensor:
@@ -152,7 +199,7 @@ class Tensor:
                 other.grad = other._zero_grad_if_none()
                 other.grad += self.transpose() @ result.grad
 
-        result._backward = backward
+        result._grad_fn = backward
         return result
 
     def __mul__(self, other: Tensor) -> Tensor:
@@ -172,15 +219,35 @@ class Tensor:
                 )
             if self.requires_grad:
                 self.grad = self._zero_grad_if_none()
-                self.grad += Tensor(other.data) * result.grad
+                self.grad.data += other.data * result.grad.data
             if other.requires_grad:
                 other.grad = other._zero_grad_if_none()
-                other.grad += Tensor(self.data) * result.grad
+                other.grad.data += self.data * result.grad.data
 
-        result._backward = backward
+        result._grad_fn = backward
+        return result
+
+    def __getitem__(self, key):
+        result = Tensor(self.data[key])
+        result.requires_grad = self.requires_grad
+        if not result.requires_grad:
+            return result
+        result._children = (self,)
+        result._op = "GetItem"
+
+        def backward():
+            if result.grad is None:
+                raise RuntimeError("result grad must be calculated before its children")
+            if self.requires_grad:
+                self.grad = self._zero_grad_if_none()
+                grad_data = np.zeros_like(self.data)
+                np.add.at(grad_data, key, result.grad.data)
+                self.grad += Tensor(grad_data)
+
+        result._grad_fn = backward
         return result
 
     def _zero_grad_if_none(self) -> Tensor:
         if self.grad is not None:
             return self.grad
-        return Tensor(np.zeros(self.shape, dtype=np.double))
+        return Tensor(np.zeros_like(self.data))
