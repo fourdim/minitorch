@@ -10,6 +10,10 @@ def compute_broadcast_dims(shape: tuple[int, ...], ndim: int):
 
 class Tensor:
     def __init__(self, data: Any):
+        if isinstance(data, Tensor):
+            self.__dict__.update(data.__dict__)
+            return
+
         self.data: np.ndarray = data if isinstance(data, np.ndarray) else np.array(data)
         self.requires_grad = False
         self.grad: Tensor | None = None
