@@ -1,4 +1,4 @@
-from minitorch import Tensor
+from minitorch.tensor import Tensor
 
 
 class Parameter(Tensor):

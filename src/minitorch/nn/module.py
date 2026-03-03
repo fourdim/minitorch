@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from .parameter import Parameter
+from minitorch.nn.parameter import Parameter
 
 
 class Module(ABC):

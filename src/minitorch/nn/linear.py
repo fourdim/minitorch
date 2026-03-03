@@ -1,9 +1,8 @@
 import numpy as np
 
-from minitorch import Tensor
-
-from .module import Module
-from .parameter import Parameter
+from minitorch.nn.module import Module
+from minitorch.nn.parameter import Parameter
+from minitorch.tensor import Tensor
 
 
 class Linear(Module):
