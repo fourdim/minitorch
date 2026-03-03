@@ -3,6 +3,13 @@ from typing import Any
 import numpy as np
 
 
+def _ensure_tensor(x) -> Tensor:
+    """Convert scalar or array to Tensor if needed."""
+    if isinstance(x, Tensor):
+        return x
+    return Tensor(x)
+
+
 def compute_broadcast_dims(shape: tuple[int, ...], ndim: int):
     padded = (1,) * (ndim - len(shape)) + shape
     return tuple(i for i, s in enumerate(padded) if s == 1)
@@ -32,6 +39,11 @@ class Tensor:
 
     def numpy(self):
         return self.data
+
+    def _zero_grad_if_none(self) -> Tensor:
+        if self.grad is not None:
+            return self.grad
+        return Tensor(np.zeros_like(self.data))
 
     def backward(self, gradient=None):
         self.grad = gradient
@@ -66,6 +78,8 @@ class Tensor:
         result._op = "Reshape"
 
         def backward():
+            if result.grad is None:
+                raise RuntimeError("result grad must be calculated before its children")
             if self.requires_grad:
                 self.grad = self._zero_grad_if_none()
                 self.grad += result.grad.reshape(self.shape)
@@ -107,6 +121,27 @@ class Tensor:
         new_shape = self.shape[:start_dim] + (-1,) + self.shape[end_dim + 1 :]
         return self.reshape(new_shape)
 
+    def broadcast_to(self, shape: tuple[int, ...]) -> Tensor:
+        if self.shape == shape:
+            return self
+        result = Tensor(np.broadcast_to(self.data, shape))
+        result.requires_grad = self.requires_grad
+        if not result.requires_grad:
+            return result
+        result._children = (self,)
+        result._op = "Broadcast"
+        broadcast_dims = compute_broadcast_dims(self.shape, len(result.shape))
+
+        def backward():
+            if result.grad is None:
+                raise RuntimeError("result grad must be calculated before its children")
+            if self.requires_grad:
+                self.grad = self._zero_grad_if_none()
+                self.grad += result.grad.sum(broadcast_dims, keepdim=True)
+
+        result._grad_fn = backward
+        return result
+
     def sum(self, dim: int | tuple[int, ...], keepdim: bool = False):
         result = Tensor(self.data.sum(dim, keepdims=keepdim))
         result.requires_grad = self.requires_grad
@@ -132,28 +167,28 @@ class Tensor:
         result._grad_fn = backward
         return result
 
-    def broadcast_to(self, shape: tuple[int, ...]) -> Tensor:
-        if self.shape == shape:
-            return self
-        result = Tensor(np.broadcast_to(self.data, shape))
+    def __getitem__(self, key):
+        result = Tensor(self.data[key])
         result.requires_grad = self.requires_grad
         if not result.requires_grad:
             return result
         result._children = (self,)
-        result._op = "Broadcast"
-        broadcast_dims = compute_broadcast_dims(self.shape, len(result.shape))
+        result._op = "GetItem"
 
         def backward():
             if result.grad is None:
                 raise RuntimeError("result grad must be calculated before its children")
             if self.requires_grad:
                 self.grad = self._zero_grad_if_none()
-                self.grad += result.grad.sum(broadcast_dims, keepdim=True)
+                grad_data = np.zeros_like(self.data)
+                np.add.at(grad_data, key, result.grad.data)
+                self.grad += Tensor(grad_data)
 
         result._grad_fn = backward
         return result
 
-    def __add__(self, other: Tensor) -> Tensor:
+    def __add__(self, other) -> Tensor:
+        other = _ensure_tensor(other)
         result = Tensor(self.data + other.data)
         # If any of children requires grad, then its result will require grad.
         # This is required for loss = a + b + c case
@@ -183,30 +218,22 @@ class Tensor:
         result._grad_fn = backward
         return result
 
-    def __matmul__(self, other: Tensor) -> Tensor:
-        result = Tensor(self.data @ other.data)
-        result.requires_grad = self.requires_grad | other.requires_grad
-        if not result.requires_grad:
-            return result
-        result._children = (self, other)
-        result._op = "@"
+    def __radd__(self, other):
+        return self + other
 
-        def backward():
-            if result.grad is None:
-                raise RuntimeError(
-                    "result gradient must be calculated before its children"
-                )
-            if self.requires_grad:
-                self.grad = self._zero_grad_if_none()
-                self.grad += result.grad @ other.transpose()
-            if other.requires_grad:
-                other.grad = other._zero_grad_if_none()
-                other.grad += self.transpose() @ result.grad
+    def __neg__(self):
+        return self * Tensor(-1)
 
-        result._grad_fn = backward
-        return result
+    def __sub__(self, other):
+        other = _ensure_tensor(other)
+        return self + (-other)
 
-    def __mul__(self, other: Tensor) -> Tensor:
+    def __rsub__(self, other):
+        other = _ensure_tensor(other)
+        return other - self
+
+    def __mul__(self, other) -> Tensor:
+        other = _ensure_tensor(other)
         result = Tensor(self.data * other.data)
         result.requires_grad = self.requires_grad | other.requires_grad
         if not result.requires_grad:
@@ -231,27 +258,103 @@ class Tensor:
         result._grad_fn = backward
         return result
 
-    def __getitem__(self, key):
-        result = Tensor(self.data[key])
-        result.requires_grad = self.requires_grad
+    def __rmul__(self, other):
+        return self * other
+
+    def __truediv__(self, other):
+        other = _ensure_tensor(other)
+        return self * (other**-1.0)
+
+    def __rtruediv__(self, other):
+        other = _ensure_tensor(other)
+        return other / self
+
+    def __pow__(self, other):
+        other = _ensure_tensor(other)
+        result = Tensor(self.data ** other.data.astype(float))
+        result.requires_grad = self.requires_grad | other.requires_grad
         if not result.requires_grad:
             return result
-        result._children = (self,)
-        result._op = "GetItem"
+        result._children = (self, other)
+        result._op = "**"
 
         def backward():
             if result.grad is None:
                 raise RuntimeError("result grad must be calculated before its children")
             if self.requires_grad:
                 self.grad = self._zero_grad_if_none()
-                grad_data = np.zeros_like(self.data)
-                np.add.at(grad_data, key, result.grad.data)
-                self.grad += Tensor(grad_data)
+                self.grad += result.grad * other * (self ** (other - Tensor(1)))
+            if other.requires_grad:
+                other.grad = other._zero_grad_if_none()
+                other.grad += result.grad * (self**other) * self.log()
 
         result._grad_fn = backward
         return result
 
-    def _zero_grad_if_none(self) -> Tensor:
-        if self.grad is not None:
-            return self.grad
-        return Tensor(np.zeros_like(self.data))
+    def __rpow__(self, other):
+        other = _ensure_tensor(other)
+        return other**self
+
+    def log(self):
+        result = Tensor(np.log(self.data))
+        result.requires_grad = self.requires_grad
+        if not result.requires_grad:
+            return result
+        result._children = (self,)
+        result._op = "log"
+
+        def backward():
+            if result.grad is None:
+                raise RuntimeError("result grad must be calculated before its children")
+            if self.requires_grad:
+                self.grad = self._zero_grad_if_none()
+                self.grad += result.grad * (self ** Tensor(-1))
+
+        result._grad_fn = backward
+        return result
+
+    def sqrt(self):
+        return self ** Tensor(0.5)
+
+    def __matmul__(self, other: Tensor) -> Tensor:
+        result = Tensor(self.data @ other.data)
+        result.requires_grad = self.requires_grad | other.requires_grad
+        if not result.requires_grad:
+            return result
+        result._children = (self, other)
+        result._op = "@"
+
+        def backward():
+            if result.grad is None:
+                raise RuntimeError(
+                    "result gradient must be calculated before its children"
+                )
+            if self.requires_grad:
+                self.grad = self._zero_grad_if_none()
+                self.grad += result.grad @ other.transpose()
+            if other.requires_grad:
+                other.grad = other._zero_grad_if_none()
+                other.grad += self.transpose() @ result.grad
+
+        result._grad_fn = backward
+        return result
+
+    def __iadd__(self, other):
+        other = _ensure_tensor(other)
+        self.data += other.data
+        return self
+
+    def __isub__(self, other):
+        other = _ensure_tensor(other)
+        self.data -= other.data
+        return self
+
+    def __imul__(self, other):
+        other = _ensure_tensor(other)
+        self.data *= other.data
+        return self
+
+    def __itruediv__(self, other):
+        other = _ensure_tensor(other)
+        self.data /= other.data
+        return self
