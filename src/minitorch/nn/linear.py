@@ -13,7 +13,7 @@ class Linear(Module):
         self.bias = Parameter(np.zeros(out_features)) if bias else None
 
     def forward(self, x: Tensor):
-        self.out = x @ self.weight
+        out = x @ self.weight
         if self.bias is not None:
-          self.out += self.bias
-        return self.out
+            out = out + self.bias
+        return out
