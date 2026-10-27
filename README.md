@@ -30,10 +30,16 @@ python tests/test_tensor.py
 python tests/test_nn.py
 ```
 
+## Examples
+
+- [`examples/calculator.ipynb`](./examples/calculator.ipynb): a small transformer that learns to add two 4-digit numbers.
+
 ## Acknowledgements
 
 - [Karpathy's NN Zero To Hero Youtube](https://www.youtube.com/watch?v=VMj-3S1tku0)
 - [Karpathy's NN Zero To Hero GitHub](https://github.com/karpathy/nn-zero-to-hero)
+- [Karpathy's Let's Build GPT](https://www.youtube.com/watch?v=kCc8FmEb1nY)
+- [Karpathy's NanoGPT](https://github.com/karpathy/nanoGPT)
 - [PyTorch](https://pytorch.org/)
 
 ## License
