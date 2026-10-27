@@ -49,6 +49,7 @@ class TestTensor(unittest.TestCase):
             mt.grad = None
         mt3.backward()
         for t, mt in zip(ts, mts, strict=True):
+            assert t.grad is not None and mt.grad is not None
             self.assertTrue(np.allclose(t.grad.numpy(), mt.grad.numpy()))
 
     def test_mul_backward(self):
@@ -75,6 +76,7 @@ class TestTensor(unittest.TestCase):
             mt.grad = None
         mt3.backward(minitorch.Tensor(np.ones((2, 3))))
         for t, mt in zip(ts, mts, strict=True):
+            assert t.grad is not None and mt.grad is not None
             self.assertTrue(np.allclose(t.grad.numpy(), mt.grad.numpy()))
 
     def test_mul_broadcast_backward(self):
@@ -102,6 +104,8 @@ class TestTensor(unittest.TestCase):
         mt3.backward(minitorch.Tensor(np.ones((2, 3))))
 
         # Compare gradients
+        assert t1.grad is not None and mt1.grad is not None
+        assert t2.grad is not None and mt2.grad is not None
         self.assertTrue(np.allclose(t1.grad.numpy(), mt1.grad.numpy()))
         self.assertTrue(np.allclose(t2.grad.numpy(), mt2.grad.numpy()))
 

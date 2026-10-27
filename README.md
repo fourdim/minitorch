@@ -27,6 +27,7 @@ Then, we can run the tests by specifying the test file:
 
 ```bash
 python tests/test_tensor.py
+python tests/test_nn.py
 ```
 
 ## Acknowledgements
